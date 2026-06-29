@@ -1,0 +1,2 @@
+- save before renaming
+- allow white space
