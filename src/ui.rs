@@ -1,14 +1,12 @@
 use std::io::{self, BufRead, Write};
 use std::process::{Command, Stdio};
 
-const FZF: &str = "/opt/homebrew/bin/fzf";
-
 /// Run fzf with the given items. Returns (key_pressed, selected_item).
 /// key_pressed is empty string on plain Enter.
 pub fn run_fzf(items: &[String]) -> (String, String) {
     let input = items.join("\n");
 
-    let mut child = Command::new(FZF)
+    let mut child = Command::new("fzf")
         .args([
             "--prompt=Sessions> ",
             "--layout=reverse",
@@ -20,7 +18,7 @@ pub fn run_fzf(items: &[String]) -> (String, String) {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
-        .expect("Failed to launch fzf - is it installed at /opt/homebrew/bin/fzf?");
+        .expect("Failed to launch fzf - is it installed and on PATH?");
 
     // Write items to fzf stdin then close it.
     if let Some(mut stdin) = child.stdin.take() {

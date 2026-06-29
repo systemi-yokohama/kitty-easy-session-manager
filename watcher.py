@@ -7,7 +7,7 @@ from kittens.tui.handler import result_handler
 from kitty.boss import Boss
 from kitty.window import Window
 
-sessions_dir = Path.home() / "dotfiles" / "kitty" / "sessions"
+sessions_dir = Path.home() / ".config" / "kitty" / "sessions"
 
 
 def session_file_name(session_name: str) -> str:

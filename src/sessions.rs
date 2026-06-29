@@ -9,7 +9,7 @@ const SESSION_EXTENSION: &str = ".kitty-session";
 
 pub fn session_dir() -> PathBuf {
     let home = std::env::var("HOME").expect("HOME not set");
-    PathBuf::from(home).join("dotfiles/kitty/sessions")
+    PathBuf::from(home).join(".config/kitty/sessions")
 }
 
 pub fn list_sessions(dir: &Path) -> Vec<String> {

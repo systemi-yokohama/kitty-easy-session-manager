@@ -1,2 +1,3 @@
 - save before renaming
 - allow white space
+- support relative file paths
