@@ -1,3 +1,3 @@
 - save before renaming
-- allow white space
-- support relative file paths
+- allow white space for naming sessions
+- support other than mac (osascript). use kitten notify instead if it's possible.
