@@ -8,7 +8,7 @@
 [![Python](https://img.shields.io/badge/python-%233776AB.svg?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![FZF](https://img.shields.io/badge/fzf-%23ED417D.svg?style=for-the-badge&logo=fzf&logoColor=white)](https://github.com/junegunn/fzf)
 
-<img src="assets/esm-logo.png" alt="esm-logo" width="320" />
+<img src="assets/esm-logo-medium.png" alt="esm-logo" width="320" />
 
 </div>
 
