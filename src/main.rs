@@ -12,10 +12,14 @@ fn main() {
 
     loop {
         let sessions = list_sessions(&dir);
-        let mut items = vec![CREATE_NEW.to_string()];
-        items.extend(sessions);
+        let items = sessions;
 
         let (key, target) = run_fzf(&items);
+
+        if key == "ctrl-n" {
+            create_session(&dir);
+            continue;
+        }
 
         if target.is_empty() {
             break;

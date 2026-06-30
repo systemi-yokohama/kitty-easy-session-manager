@@ -7,6 +7,34 @@ use crate::ui::prompt;
 pub const CREATE_NEW: &str = "[+ New Session]";
 const SESSION_EXTENSION: &str = ".kitty-session";
 
+fn command_path(command: &str, fallbacks: &[&str]) -> PathBuf {
+    if let Some(path) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path) {
+            let candidate = dir.join(command);
+            if candidate.is_file() {
+                return candidate;
+            }
+        }
+    }
+
+    fallbacks
+        .iter()
+        .map(PathBuf::from)
+        .find(|path| path.is_file())
+        .unwrap_or_else(|| PathBuf::from(command))
+}
+
+fn kitten_command() -> Command {
+    Command::new(command_path(
+        "kitten",
+        &[
+            "/Applications/kitty.app/Contents/MacOS/kitten",
+            "/opt/homebrew/bin/kitten",
+            "/usr/local/bin/kitten",
+        ],
+    ))
+}
+
 pub fn session_dir() -> PathBuf {
     let home = std::env::var("HOME").expect("HOME not set");
     PathBuf::from(home).join(".config/kitty/sessions")
@@ -31,7 +59,7 @@ pub fn session_filename(session: &str) -> String {
 
 pub fn goto_session(dir: &Path, session: &str) {
     let path = dir.join(session);
-    let status = Command::new("kitten")
+    let status = kitten_command()
         .args(["@", "action", "goto_session", path.to_str().unwrap()])
         .status();
     if status.map(|s| !s.success()).unwrap_or(true) {
@@ -77,7 +105,7 @@ pub fn rename_session(dir: &Path, session: &str) {
     let old_path = dir.join(session);
 
     // Save current session state so it can be restored under the new name.
-    Command::new("kitten")
+    kitten_command()
         .args([
             "@",
             "action",
@@ -96,7 +124,7 @@ pub fn rename_session(dir: &Path, session: &str) {
     fs::rename(&old_path, &new_path).expect("Failed to rename session file");
     goto_session(dir, &new_filename);
 
-    Command::new("kitten")
+    kitten_command()
         .args([
             "@",
             "close-tab",
