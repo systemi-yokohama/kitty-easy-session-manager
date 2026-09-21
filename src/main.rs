@@ -2,8 +2,8 @@ mod sessions;
 mod ui;
 
 use sessions::{
-    create_session, delete_session, goto_session, list_sessions, rename_session, session_dir,
-    session_filename, CREATE_NEW,
+    create_session, delete_session, goto_no_session, goto_session, list_sessions, rename_session,
+    session_dir, session_filename, CREATE_NEW, NO_SESSION,
 };
 use ui::run_fzf;
 
@@ -12,7 +12,9 @@ fn main() {
 
     loop {
         let sessions = list_sessions(&dir);
-        let items = sessions;
+        let mut items = sessions;
+        // Last, so that Enter on the initial selection still opens the first saved session.
+        items.push(NO_SESSION.to_string());
 
         let (key, target) = run_fzf(&items);
 
@@ -25,7 +27,9 @@ fn main() {
             break;
         }
 
-        let actual_target = if target != CREATE_NEW {
+        let is_pseudo = target == CREATE_NEW || target == NO_SESSION;
+
+        let actual_target = if !is_pseudo {
             session_filename(&target)
         } else {
             target.clone()
@@ -33,13 +37,13 @@ fn main() {
 
         match key.as_str() {
             "ctrl-r" => {
-                if target != CREATE_NEW {
+                if !is_pseudo {
                     rename_session(&dir, &actual_target);
                 }
                 // Loop back to show the picker again
             }
             "ctrl-d" => {
-                if target != CREATE_NEW {
+                if !is_pseudo {
                     delete_session(&dir, &actual_target);
                 }
                 // Loop back
@@ -48,6 +52,8 @@ fn main() {
                 // Plain Enter
                 if target == CREATE_NEW {
                     create_session(&dir);
+                } else if target == NO_SESSION {
+                    goto_no_session();
                 } else {
                     goto_session(&dir, &actual_target);
                 }

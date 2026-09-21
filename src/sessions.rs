@@ -5,6 +5,9 @@ use std::process::Command;
 use crate::ui::prompt;
 
 pub const CREATE_NEW: &str = "[+ New Session]";
+/// Pseudo entry for tabs that were not created from any session file
+/// (e.g. the tabs kitty opens at startup, before anything is saved).
+pub const NO_SESSION: &str = "[No Session]";
 const SESSION_EXTENSION: &str = ".kitty-session";
 
 fn command_path(command: &str, fallbacks: &[&str]) -> PathBuf {
@@ -64,6 +67,17 @@ pub fn goto_session(dir: &Path, session: &str) {
         .status();
     if status.map(|s| !s.success()).unwrap_or(true) {
         eprintln!("Warning: goto_session failed for '{}'", session);
+    }
+}
+
+pub fn goto_no_session() {
+    // `session:^$` matches tabs that were not created in a session. The active tab
+    // is always shown by `tab_bar_filter`, so the tab stays visible once focused.
+    let status = kitten_command()
+        .args(["@", "focus-tab", "--match", "session:^$"])
+        .status();
+    if status.map(|s| !s.success()).unwrap_or(true) {
+        eprintln!("Warning: no session-less tab to go to");
     }
 }
 
