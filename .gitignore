@@ -3,3 +3,6 @@ target
 
 ## AI artifacts
 AGENTS.md
+
+## Python artifacrs
+__pycache__
