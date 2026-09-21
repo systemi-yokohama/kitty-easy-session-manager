@@ -1,0 +1,22 @@
+schema: spec-driven
+
+context: |
+  Kitty Easy Session Manager (ESM): a small session manager for the kitty terminal.
+  Tech stack: Rust (kitty-esm-switcher, an fzf-based picker), Python (watcher.py, tab_bar.py
+  running inside kitty). Targets kitty 0.48.x; currently macOS-only (osascript notifications).
+  Integration lives in the user's ~/.config/kitty/kitty.conf (key maps, `watcher`,
+  `tab_bar_filter session:.`, `tab_bar_style custom`).
+  Session files: ~/.config/kitty/sessions/<name>.kitty-session.
+  Domain terms: "session" = a kitty session (tabs tagged with the name of the file they were
+  created from); "session-less tab" = a tab created outside any session (e.g. the tabs kitty
+  opens at startup); "No Session" = the picker entry that focuses a session-less tab.
+  The switcher runs as a kitty overlay and talks to kitty via `kitten @`.
+  We use conventional-style short lowercase commit messages.
+
+rules:
+  specs:
+    - Describe observable behavior of the switcher, watcher, tab bar and kitty.conf integration, not implementation details.
+    - When a requirement depends on kitty's behavior, say whether it was verified in a running kitty or only read from the kitty docs.
+    - README.md and kitty.conf comments must not contradict the specs; update them in the same change.
+  tasks:
+    - Include a manual verification step in a running kitty for anything that depends on kitty's runtime behavior.

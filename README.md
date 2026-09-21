@@ -68,8 +68,10 @@ Add the ESM watcher, tab bar, tab filtering, and key mappings to `~/.config/kitt
 # Autosave watcher
 watcher $HOME/.config/kitty/easy-session-manager/watcher.py
 
-# Show only tabs belonging to the active session, plus session-less tabs.
-tab_bar_filter session:~
+# Show only tabs of the active tab's session. When the active tab has no session,
+# only session-less tabs are shown. Don't use `session:~`: it also pulls in the
+# tabs of the most recently loaded session.
+tab_bar_filter session:.
 
 tab_bar_style custom
 tab_powerline_style round
@@ -96,7 +98,7 @@ Remove the ESM lines from `~/.config/kitty/kitty.conf` if you added them:
 
 ```conf
 watcher $HOME/.config/kitty/easy-session-manager/watcher.py
-tab_bar_filter session:~
+tab_bar_filter session:.
 tab_bar_style custom
 tab_powerline_style round
 tab_bar_min_tabs 1
@@ -128,9 +130,13 @@ target/release/kitty-esm-switcher
 
 The picker supports:
 
-- `Enter`: open the selected session, or create a new one from `[+ New Session]`
+- `Enter`: open the selected session. Selecting `[No Session]` (always the first entry) focuses a tab that does not belong to any session, such as the tabs kitty opened at startup.
+- `Ctrl-n`: create a new session (prompts for a name)
 - `Ctrl-r`: rename the selected session
-- `Ctrl-d`: delete the selected session
+- `Ctrl-d`: delete the selected session (asks for confirmation)
+- `Esc`: close the picker
+
+`Ctrl-r` and `Ctrl-d` do nothing on `[No Session]`.
 
 New sessions are written as minimal kitty session files containing one tab and one launched shell.
 
@@ -153,6 +159,8 @@ tab_bar_min_tabs 1
 `watcher.py` uses kitty's Python APIs to save loaded sessions into the session directory. It can be wired into kitty as a watcher or invoked as a kitten-style helper, depending on your kitty config.
 
 The watcher saves each loaded session with a `.kitty-session` filename and uses kitty's `save_as_session` behavior with foreground process tracking enabled.
+
+Both the save key (`cmd+s`) and quitting kitty save **all** loaded named sessions, not only the active one. Tabs that belong to no session are not saved.
 
 ## Repository Layout
 
