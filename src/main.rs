@@ -13,8 +13,7 @@ fn main() {
     loop {
         let sessions = list_sessions(&dir);
         let mut items = sessions;
-        // Last, so that Enter on the initial selection still opens the first saved session.
-        items.push(NO_SESSION.to_string());
+        items.insert(0, NO_SESSION.to_string());
 
         let (key, target) = run_fzf(&items);
 
