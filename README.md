@@ -133,7 +133,7 @@ The picker supports:
 - `Enter`: open the selected session. Selecting `[No Session]` (always the first entry) focuses a tab that does not belong to any session, such as the tabs kitty opened at startup.
 - `Ctrl-n`: create a new session (prompts for a name)
 - `Ctrl-r`: rename the selected session
-- `Ctrl-d`: delete the selected session (asks for confirmation)
+- `Ctrl-d`: delete the selected session (asks for confirmation). Its file is removed and its open tabs are closed. If you are in that session, you are first moved to the previous session, or to `[No Session]` if there is none. It is refused when there is no other tab to move to.
 - `Esc`: close the picker
 
 `Ctrl-r` and `Ctrl-d` do nothing on `[No Session]`.

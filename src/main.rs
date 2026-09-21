@@ -42,8 +42,9 @@ fn main() {
                 // Loop back to show the picker again
             }
             "ctrl-d" => {
-                if !is_pseudo {
-                    delete_session(&dir, &actual_target);
+                if !is_pseudo && delete_session(&dir, &actual_target) {
+                    // We were in the deleted session; exiting closes the picker's overlay.
+                    break;
                 }
                 // Loop back
             }
