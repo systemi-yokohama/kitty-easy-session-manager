@@ -38,6 +38,47 @@ fn kitten_command() -> Command {
     ))
 }
 
+/// Quote an argument for `kitten @ action`, which re-splits its arguments shell-style.
+fn quote_action_arg(arg: &str) -> String {
+    format!("'{}'", arg.replace('\'', "'\\''"))
+}
+
+/// Tell the user something and wait, since the picker's screen is redrawn right after.
+fn show_message(message: &str) {
+    prompt(&format!("{} Press Enter to go back.", message));
+}
+
+/// Check a typed session name and return it trimmed, or say why it is refused.
+pub fn validate_session_name(input: &str) -> Result<String, String> {
+    let name = input.trim();
+    if name.is_empty() {
+        return Err("The name is empty.".to_string());
+    }
+    if name.starts_with('.') {
+        return Err("The name must not start with '.'.".to_string());
+    }
+    if let Some(c) = name
+        .chars()
+        .find(|c| matches!(c, '/' | '\\' | '\'' | '"') || c.is_control())
+    {
+        let shown = match c {
+            '/' => "a slash",
+            '\\' => "a backslash",
+            '\'' => "a single quote",
+            '"' => "a double quote",
+            _ => "control characters",
+        };
+        return Err(format!("The name must not contain {}.", shown));
+    }
+    if name.ends_with(SESSION_EXTENSION) {
+        return Err(format!("The name must not end with '{}'.", SESSION_EXTENSION));
+    }
+    if name == NO_SESSION || name == CREATE_NEW {
+        return Err(format!("'{}' is reserved.", name));
+    }
+    Ok(name.to_string())
+}
+
 pub fn session_dir() -> PathBuf {
     let home = std::env::var("HOME").expect("HOME not set");
     PathBuf::from(home).join(".config/kitty/sessions")
@@ -63,7 +104,12 @@ pub fn session_filename(session: &str) -> String {
 pub fn goto_session(dir: &Path, session: &str) {
     let path = dir.join(session);
     let status = kitten_command()
-        .args(["@", "action", "goto_session", path.to_str().unwrap()])
+        .args([
+            "@",
+            "action",
+            "goto_session",
+            &quote_action_arg(&path.to_string_lossy()),
+        ])
         .status();
     if status.map(|s| !s.success()).unwrap_or(true) {
         eprintln!("Warning: goto_session failed for '{}'", session);
@@ -82,77 +128,148 @@ pub fn goto_no_session() {
 }
 
 pub fn create_session(dir: &Path) {
-    let name = prompt("New session name: ");
-    if name.is_empty() {
+    let input = prompt("New session name: ");
+    if input.trim().is_empty() {
         return;
     }
+    let name = match validate_session_name(&input) {
+        Ok(name) => name,
+        Err(reason) => {
+            show_message(&reason);
+            return;
+        }
+    };
     let filename = session_filename(&name);
     let path = dir.join(&filename);
     if path.exists() {
-        eprintln!("Session '{}' already exists.", filename);
+        show_message(&format!("Session '{}' already exists.", name));
         return;
     }
     // Minimal session: one tab + launch (opens default shell).
     // "launch" with no args uses kitty's configured shell.
     // The kitty-unserialize-data form in saved sessions is for
     // restoring existing windows and must not be used here.
-    fs::write(&path, "new_tab\nlaunch\n").expect("Failed to create session file");
+    if let Err(err) = fs::write(&path, "new_tab\nlaunch\n") {
+        show_message(&format!("Failed to create '{}': {}.", filename, err));
+        return;
+    }
     goto_session(dir, &filename);
 }
 
-pub fn rename_session(dir: &Path, session: &str) {
-    let new_name = prompt(&format!(
-        "Rename '{}' to: ",
-        session.trim_end_matches(SESSION_EXTENSION)
-    ));
-    if new_name.is_empty() {
-        return;
-    }
-    let new_filename = session_filename(&new_name);
-    let new_path = dir.join(&new_filename);
-    if new_path.exists() {
-        eprintln!("'{}' already exists.", new_filename);
-        return;
-    }
-
-    let old_stem = session.trim_end_matches(SESSION_EXTENSION);
-    let old_path = dir.join(session);
-
-    // Save current session state so it can be restored under the new name.
-    kitten_command()
+/// Save the current state of the session `name` to its own file `session`.
+/// `kitten @ action` may report success even when nothing matched, so success means the file
+/// was actually rewritten.
+fn save_snapshot(dir: &Path, name: &str, session: &str) -> bool {
+    let path = dir.join(session);
+    let before = fs::metadata(&path).and_then(|m| m.modified()).ok();
+    let status = kitten_command()
         .args([
             "@",
             "action",
             "save_as_session",
             "--base-dir",
-            dir.to_str().unwrap(),
+            &quote_action_arg(&dir.to_string_lossy()),
             "--save-only",
             "--use-foreground-process",
-            "--match",
-            &format!("session:{}", old_stem),
-            session,
+            &quote_action_arg(&format!("--match={}", session_match(name))),
+            &quote_action_arg(session),
         ])
-        .status()
-        .ok();
-
-    fs::rename(&old_path, &new_path).expect("Failed to rename session file");
-    goto_session(dir, &new_filename);
-
-    kitten_command()
-        .args([
-            "@",
-            "close-tab",
-            "--match",
-            &format!("session:{}", old_stem),
-        ])
-        .status()
-        .ok();
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    if !status.map(|s| s.success()).unwrap_or(false) {
+        return false;
+    }
+    match (fs::metadata(&path).and_then(|m| m.modified()).ok(), before) {
+        (Some(after), Some(before)) => after > before,
+        (Some(_), None) => true,
+        (None, _) => false,
+    }
 }
 
-/// Escape regex metacharacters so a session name can be used inside a kitty `session:` match.
+/// Returns true when the picker must exit: renaming an open session switches to the renamed
+/// session, leaving the picker's overlay behind in a tab the user is no longer in.
+pub fn rename_session(dir: &Path, session: &str) -> bool {
+    let old = session.trim_end_matches(SESSION_EXTENSION);
+    let input = prompt(&format!("Rename '{}' to: ", old));
+    if input.trim().is_empty() {
+        return false;
+    }
+    let new = match validate_session_name(&input) {
+        Ok(name) => name,
+        Err(reason) => {
+            show_message(&reason);
+            return false;
+        }
+    };
+    if new == old {
+        return false;
+    }
+    let new_filename = session_filename(&new);
+    let new_path = dir.join(&new_filename);
+    let old_path = dir.join(session);
+    if new_path.exists() {
+        show_message(&format!("'{}' already exists.", new));
+        return false;
+    }
+
+    // Nothing is running in a session that is not open, so only the file changes.
+    if !session_is_open(old) {
+        if let Err(err) = fs::rename(&old_path, &new_path) {
+            show_message(&format!("Failed to rename '{}': {}.", old, err));
+        }
+        return false;
+    }
+
+    let confirm = prompt(&format!(
+        "Renaming '{}' to '{}' closes its open tabs and re-opens them from a saved snapshot. \
+         Running programs are started again and scrollback is lost. Continue? [y/N]: ",
+        old, new
+    ));
+    if !confirm.eq_ignore_ascii_case("y") {
+        return false;
+    }
+
+    // The old tabs are closed last, only once the renamed session is open, so a failure at any
+    // earlier step leaves the old session as it was.
+    if !save_snapshot(dir, old, session) {
+        show_message(&format!(
+            "Could not save a snapshot of '{}'. Nothing was changed.",
+            old
+        ));
+        return false;
+    }
+    if let Err(err) = fs::rename(&old_path, &new_path) {
+        show_message(&format!("Failed to rename '{}': {}.", old, err));
+        return false;
+    }
+    goto_session(dir, &new_filename);
+    if !session_is_open(&new) {
+        let undone = fs::rename(&new_path, &old_path).is_ok();
+        show_message(&format!(
+            "Could not open '{}'. {}",
+            new,
+            if undone {
+                format!("The rename was undone and '{}' is unchanged.", old)
+            } else {
+                format!("Its file is now '{}'; '{}' is still open.", new_filename, old)
+            }
+        ));
+        return false;
+    }
+    close_session(old);
+    true
+}
+
+/// Escape a session name so it can be used inside a kitty `session:` match expression.
 fn regex_escape(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     for c in name.chars() {
+        if c.is_whitespace() {
+            // A literal space would split the match expression into two tokens.
+            out.push_str("\\s");
+            continue;
+        }
         if "\\.+*?()|[]{}^$#".contains(c) {
             out.push('\\');
         }
@@ -226,7 +343,7 @@ fn move_away_from(name: &str) {
 /// so it is not closed here.
 fn close_session(name: &str) {
     kitten_command()
-        .args(["@", "action", "close_session", name])
+        .args(["@", "action", "close_session", &quote_action_arg(name)])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
@@ -242,8 +359,8 @@ pub fn delete_session(dir: &Path, session: &str) -> bool {
 
     // Closing the last tabs would quit kitty, so refuse before touching anything.
     if current && !other_tabs_exist(name) {
-        prompt(&format!(
-            "Cannot delete '{}': you are in it and there is no other tab to move to. Press Enter to go back.",
+        show_message(&format!(
+            "Cannot delete '{}': you are in it and there is no other tab to move to.",
             name
         ));
         return false;
@@ -264,10 +381,7 @@ pub fn delete_session(dir: &Path, session: &str) -> bool {
     }
 
     if let Err(err) = fs::remove_file(dir.join(session)) {
-        prompt(&format!(
-            "Failed to delete '{}': {}. Press Enter to go back.",
-            name, err
-        ));
+        show_message(&format!("Failed to delete '{}': {}.", name, err));
         return false;
     }
 
@@ -278,4 +392,41 @@ pub fn delete_session(dir: &Path, session: &str) -> bool {
         close_session(name);
     }
     current
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_plain_and_spaced_names() {
+        assert_eq!(validate_session_name("blog").unwrap(), "blog");
+        assert_eq!(validate_session_name("  my project  ").unwrap(), "my project");
+        assert_eq!(validate_session_name("a.b+c[1](2)").unwrap(), "a.b+c[1](2)");
+    }
+
+    #[test]
+    fn refuses_unsafe_names() {
+        for bad in [
+            "", "   ", ".hidden", "..", "../evil", "a/b", "a\\b", "it's", "say \"hi\"",
+            "tab\there", "notes.kitty-session", NO_SESSION, CREATE_NEW,
+        ] {
+            assert!(validate_session_name(bad).is_err(), "{:?} should be refused", bad);
+        }
+    }
+
+    #[test]
+    fn regex_escape_keeps_names_one_token() {
+        assert_eq!(regex_escape("my proj"), "my\\sproj");
+        assert_eq!(regex_escape("a.b+c"), "a\\.b\\+c");
+        assert_eq!(regex_escape("x[1](2)"), "x\\[1\\]\\(2\\)");
+        assert_eq!(session_match("test"), "session:^test$");
+        assert!(!session_match("my proj").contains(' '));
+    }
+
+    #[test]
+    fn action_args_are_single_quoted() {
+        assert_eq!(quote_action_arg("/a b/c.kitty-session"), "'/a b/c.kitty-session'");
+        assert_eq!(quote_action_arg("it's"), "'it'\\''s'");
+    }
 }

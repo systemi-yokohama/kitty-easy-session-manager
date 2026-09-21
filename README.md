@@ -132,13 +132,15 @@ The picker supports:
 
 - `Enter`: open the selected session. Selecting `[No Session]` (always the first entry) focuses a tab that does not belong to any session, such as the tabs kitty opened at startup.
 - `Ctrl-n`: create a new session (prompts for a name)
-- `Ctrl-r`: rename the selected session
+- `Ctrl-r`: rename the selected session. A session that is not open only has its file renamed. For an open session you are warned first: its tabs are closed and re-opened from a saved snapshot under the new name (running programs are started again, scrollback is lost). If re-opening fails, the rename is undone.
 - `Ctrl-d`: delete the selected session (asks for confirmation). Its file is removed and its open tabs are closed. If you are in that session, you are first moved to the previous session, or to `[No Session]` if there is none. It is refused when there is no other tab to move to.
 - `Esc`: close the picker
 
 `Ctrl-r` and `Ctrl-d` do nothing on `[No Session]`.
 
 New sessions are written as minimal kitty session files containing one tab and one launched shell.
+
+Session names may contain spaces. A name is refused (with the reason shown) if it is empty, starts with `.`, contains `/`, `\`, a quote or a control character, ends with `.kitty-session`, or is `[No Session]`.
 
 ## Kitty Files
 

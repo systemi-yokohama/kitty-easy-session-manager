@@ -17,6 +17,11 @@ def session_file_name(session_name: str) -> str:
     return f"{session_name}.kitty-session"
 
 
+def session_match(session_name: str) -> str:
+    # A literal space would split kitty's match expression into two tokens, so spell it \s.
+    return f"session:^{re.escape(session_name).replace(chr(92) + ' ', chr(92) + 's')}$"
+
+
 def applescript_string(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
@@ -39,7 +44,7 @@ def save_all_sessions(boss: Boss) -> int:
         boss.save_as_session(
             "--base-dir",
             str(sessions_dir),
-            f"--match=session:^{re.escape(session_name)}$",
+            f"--match={session_match(session_name)}",
             "--save-only",
             "--use-foreground-process",
             session_file_name(session_name),

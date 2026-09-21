@@ -36,8 +36,9 @@ fn main() {
 
         match key.as_str() {
             "ctrl-r" => {
-                if !is_pseudo {
-                    rename_session(&dir, &actual_target);
+                if !is_pseudo && rename_session(&dir, &actual_target) {
+                    // The session was re-opened under its new name; leave the old tab.
+                    break;
                 }
                 // Loop back to show the picker again
             }

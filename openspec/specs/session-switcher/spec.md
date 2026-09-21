@@ -48,15 +48,41 @@ _Verification: verified in a kitty 0.48.2 test instance (2026-09-21): Enter on `
 - **THEN** nothing is created and the picker is shown again
 
 ### Requirement: Rename a session
-`Ctrl-r` on a session SHALL prompt for a new name. An empty name or a name that already exists SHALL change nothing. Otherwise the session file SHALL be renamed to `<new>.kitty-session` and kitty SHALL switch to the session under its new name.
+`Ctrl-r` on a session SHALL prompt for a new name. An empty name, the current name, a name that already exists, or a name that is not valid under the session name rules SHALL change nothing, and the reason SHALL be shown for the last two cases. Sessions SHALL be selected by their exact name: renaming `test` SHALL NOT affect `test2`.
+
+If the session has no open tabs, only its file SHALL be renamed to `<new>.kitty-session`; nothing SHALL be opened and the picker SHALL be shown again.
+
+If the session has open tabs, the switcher SHALL first warn that its tabs will be closed and re-opened from a saved snapshot, that running programs are started again and scrollback is lost, and ask for confirmation with a `[y/N]` prompt. On `y` or `Y` it SHALL: save a snapshot of that session to its file; rename the file; open the session under the new name and switch to it; and only when the renamed session is open, close the tabs of the old session. Afterwards the picker SHALL exit. If saving the snapshot, renaming the file or opening the renamed session fails, the switcher SHALL keep the old session and its file, undo any file rename, and tell the user. Any other answer SHALL change nothing.
+
+_Verification: every scenario except "Invalid new name" was run against the implementation in a kitty 0.48.2 test instance on 2026-09-22, including renaming the session the user is in and a session with a space in its name; "Reopening fails" was simulated with a `kitten` wrapper that drops `goto_session`. "Invalid new name" is covered by the shared name-validation unit tests and by the same check on create; its live run was skipped because of a mistake in the test script._
 
 #### Scenario: Rename to a free name
-- **WHEN** the user presses `Ctrl-r` on `test` and enters `scratch`
-- **THEN** `test.kitty-session` no longer exists, `scratch.kitty-session` exists and kitty is in the `scratch` session
+- **WHEN** the user presses `Ctrl-r` on `test`, which has no open tabs, and enters `scratch`
+- **THEN** `test.kitty-session` no longer exists, `scratch.kitty-session` exists, kitty stays where it was and the picker is shown again
 
 #### Scenario: Rename to an existing name
 - **WHEN** the user presses `Ctrl-r` on `test` and enters `docker`, which exists
-- **THEN** both files are unchanged
+- **THEN** both files are unchanged and the switcher says the name is taken
+
+#### Scenario: Rename an open session
+- **WHEN** the user presses `Ctrl-r` on `test`, which has open tabs, enters `scratch` and answers `y` to the warning
+- **THEN** `test.kitty-session` no longer exists, `scratch.kitty-session` holds the snapshot, kitty is in the `scratch` session, `test`'s original tabs are closed and the picker has exited
+
+#### Scenario: Similar names are not mixed up
+- **WHEN** sessions `test` and `test2` are both open and the user renames `test` to `scratch`
+- **THEN** `scratch.kitty-session` contains only `test`'s tabs and `test2`'s tabs stay open and untouched
+
+#### Scenario: Warning is declined
+- **WHEN** the user presses `Ctrl-r` on an open session, enters a free name and answers `n`
+- **THEN** nothing changes and the session's tabs stay open
+
+#### Scenario: Reopening fails
+- **WHEN** the renamed session cannot be opened after the file was renamed
+- **THEN** the file is renamed back, the old session's tabs are still open, and the user is told the rename failed
+
+#### Scenario: Invalid new name
+- **WHEN** the user presses `Ctrl-r` on `test` and enters `a/b`
+- **THEN** nothing changes and the switcher explains that `/` is not allowed
 
 ### Requirement: Delete a session
 `Ctrl-d` on a session SHALL ask for confirmation with a `[y/N]` prompt that names the session. If the session has open tabs, the prompt SHALL say that they will be closed. If the session is the one the user is currently in, the prompt SHALL additionally say that the user will be moved to the previously active session, or to a session-less tab when there is none.
@@ -97,3 +123,24 @@ Pressing Esc, or pressing Enter with no item selected, SHALL close the picker wi
 #### Scenario: Escape
 - **WHEN** the user presses Esc in the picker
 - **THEN** the picker closes and the current session is unchanged
+
+### Requirement: Session names
+A session name SHALL be accepted when, after trimming surrounding whitespace, it is not empty, does not start with `.`, does not contain `/`, `\`, `'`, `"` or control characters, does not end with `.kitty-session`, and is not `[No Session]`. Spaces inside a name SHALL be allowed. When a name is refused, the switcher SHALL say why and create nothing. Every operation of the switcher (open, create, delete) SHALL work for any accepted name, including names with spaces.
+
+_Verification: run against the implementation in a kitty 0.48.2 test instance on 2026-09-22: create, reopen and delete of `my project`; names with `.`, `+`, `[`, `(`; refused names (`../x`, `a/b`, `[No Session]`, `x.kitty-session`, `it's`, `.hid`) each showed a reason and created nothing. Trimming and the full rule set are covered by unit tests._
+
+#### Scenario: Name with spaces
+- **WHEN** the user creates a session named `my project`, opens it later from the picker, and deletes it
+- **THEN** `my project.kitty-session` is created, opening switches to that session, and deleting removes the file and closes that session's tabs
+
+#### Scenario: Name that would leave the sessions directory
+- **WHEN** the user enters `../evil` or `a/b` as a new session name
+- **THEN** the switcher explains that `/` is not allowed and nothing is created
+
+#### Scenario: Name that collides with the pseudo entry or the file extension
+- **WHEN** the user enters `[No Session]` or `notes.kitty-session`
+- **THEN** the switcher refuses the name and nothing is created
+
+#### Scenario: Surrounding whitespace
+- **WHEN** the user enters `  blog  `
+- **THEN** the session is created as `blog.kitty-session`

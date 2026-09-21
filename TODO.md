@@ -1,4 +1,2 @@
-- save before renaming
-- allow white space for naming sessions
 - support other than mac (osascript). use kitten notify instead if it's possible.
 - add installation, uninstallation scripts after the method is fixed.
