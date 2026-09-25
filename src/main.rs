@@ -3,22 +3,24 @@ mod ui;
 
 use sessions::{
     create_session, delete_session, goto_no_session, goto_session, list_sessions, rename_session,
-    session_dir, session_filename, CREATE_NEW, NO_SESSION,
+    session_dir, session_filename, NO_SESSION,
 };
-use ui::run_fzf;
+use ui::{fatal, run_fzf, show_message};
 
 fn main() {
-    let dir = session_dir();
+    let dir = session_dir().unwrap_or_else(|err| fatal(&err));
 
     loop {
-        let sessions = list_sessions(&dir);
-        let mut items = sessions;
+        let mut items = list_sessions(&dir).unwrap_or_else(|err| fatal(&err));
         items.insert(0, NO_SESSION.to_string());
 
-        let (key, target) = run_fzf(&items);
+        let (key, target) = run_fzf(&items).unwrap_or_else(|err| fatal(&err));
 
         if key == "ctrl-n" {
-            create_session(&dir);
+            if create_session(&dir) {
+                // Switched to the new session; the picker's overlay is in the tab we left.
+                break;
+            }
             continue;
         }
 
@@ -26,12 +28,11 @@ fn main() {
             break;
         }
 
-        let is_pseudo = target == CREATE_NEW || target == NO_SESSION;
-
-        let actual_target = if !is_pseudo {
-            session_filename(&target)
-        } else {
+        let is_pseudo = target == NO_SESSION;
+        let actual_target = if is_pseudo {
             target.clone()
+        } else {
+            session_filename(&target)
         };
 
         match key.as_str() {
@@ -51,14 +52,15 @@ fn main() {
             }
             _ => {
                 // Plain Enter
-                if target == CREATE_NEW {
-                    create_session(&dir);
-                } else if target == NO_SESSION {
-                    goto_no_session();
+                let result = if is_pseudo {
+                    goto_no_session()
                 } else {
-                    goto_session(&dir, &actual_target);
+                    goto_session(&dir, &actual_target)
+                };
+                match result {
+                    Ok(()) => break,
+                    Err(err) => show_message(&err),
                 }
-                break;
             }
         }
     }

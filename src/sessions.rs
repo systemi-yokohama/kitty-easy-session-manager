@@ -2,9 +2,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::ui::prompt;
+use crate::ui::{prompt, show_message};
 
-pub const CREATE_NEW: &str = "[+ New Session]";
 /// Pseudo entry for tabs that were not created from any session file
 /// (e.g. the tabs kitty opens at startup, before anything is saved).
 pub const NO_SESSION: &str = "[No Session]";
@@ -43,11 +42,6 @@ fn quote_action_arg(arg: &str) -> String {
     format!("'{}'", arg.replace('\'', "'\\''"))
 }
 
-/// Tell the user something and wait, since the picker's screen is redrawn right after.
-fn show_message(message: &str) {
-    prompt(&format!("{} Press Enter to go back.", message));
-}
-
 /// Check a typed session name and return it trimmed, or say why it is refused.
 pub fn validate_session_name(input: &str) -> Result<String, String> {
     let name = input.trim();
@@ -73,20 +67,31 @@ pub fn validate_session_name(input: &str) -> Result<String, String> {
     if name.ends_with(SESSION_EXTENSION) {
         return Err(format!("The name must not end with '{}'.", SESSION_EXTENSION));
     }
-    if name == NO_SESSION || name == CREATE_NEW {
+    if name == NO_SESSION {
         return Err(format!("'{}' is reserved.", name));
     }
     Ok(name.to_string())
 }
 
-pub fn session_dir() -> PathBuf {
-    let home = std::env::var("HOME").expect("HOME not set");
-    PathBuf::from(home).join(".config/kitty/sessions")
+pub fn session_dir() -> Result<PathBuf, String> {
+    let home = std::env::var("HOME").map_err(|_| "HOME is not set.".to_string())?;
+    Ok(PathBuf::from(home).join(".config/kitty/sessions"))
 }
 
-pub fn list_sessions(dir: &Path) -> Vec<String> {
-    let mut sessions: Vec<String> = fs::read_dir(dir)
-        .expect("Failed to read session directory")
+/// A missing directory is an empty list; it is created when the first session is created.
+pub fn list_sessions(dir: &Path) -> Result<Vec<String>, String> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => {
+            return Err(format!(
+                "Could not read the sessions directory '{}': {}.",
+                dir.display(),
+                err
+            ))
+        }
+    };
+    let mut sessions: Vec<String> = entries
         .filter_map(|e| e.ok())
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
@@ -94,66 +99,117 @@ pub fn list_sessions(dir: &Path) -> Vec<String> {
         })
         .collect();
     sessions.sort();
-    sessions
+    Ok(sessions)
 }
 
 pub fn session_filename(session: &str) -> String {
     format!("{}{}", session, SESSION_EXTENSION)
 }
 
-pub fn goto_session(dir: &Path, session: &str) {
+/// Poll until `condition` holds; kitty applies remote actions asynchronously.
+fn wait_until(condition: impl Fn() -> bool) -> bool {
+    for _ in 0..10 {
+        if condition() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    condition()
+}
+
+/// Switch to a session. `kitten @ action goto_session` exits 0 even when it did nothing, so
+/// success is decided from kitty's state: the user must end up focused in that session.
+pub fn goto_session(dir: &Path, session: &str) -> Result<(), String> {
+    let name = session.trim_end_matches(SESSION_EXTENSION);
     let path = dir.join(session);
-    let status = kitten_command()
+    let output = kitten_command()
         .args([
             "@",
             "action",
             "goto_session",
             &quote_action_arg(&path.to_string_lossy()),
         ])
-        .status();
-    if status.map(|s| !s.success()).unwrap_or(true) {
-        eprintln!("Warning: goto_session failed for '{}'", session);
+        .output()
+        .map_err(|err| format!("Could not run kitten: {}.", err))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Could not open '{}': {}",
+            name,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    if wait_until(|| in_session(name)) {
+        Ok(())
+    } else {
+        Err(format!("Could not open '{}': kitty did not switch to it.", name))
     }
 }
 
-pub fn goto_no_session() {
-    // `session:^$` matches tabs that were not created in a session. The active tab
-    // is always shown by `tab_bar_filter`, so the tab stays visible once focused.
+/// Go to a tab that belongs to no session, creating one when none exists. `session:^$` matches
+/// tabs not created in a session; the active tab is always shown by `tab_bar_filter`.
+pub fn goto_no_session() -> Result<(), String> {
+    if !any_tab_matches("session:^$") {
+        let output = kitten_command()
+            .args(["@", "launch", "--type=tab", "--cwd=current"])
+            .output()
+            .map_err(|err| format!("Could not run kitten: {}.", err))?;
+        if !output.status.success() {
+            return Err(format!(
+                "Could not create a tab: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+    }
     let status = kitten_command()
         .args(["@", "focus-tab", "--match", "session:^$"])
-        .status();
-    if status.map(|s| !s.success()).unwrap_or(true) {
-        eprintln!("Warning: no session-less tab to go to");
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|err| format!("Could not run kitten: {}.", err))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Could not go to a tab outside the sessions.".to_string())
     }
 }
 
-pub fn create_session(dir: &Path) {
+/// Returns true when the picker should exit: the session was created and switched to.
+pub fn create_session(dir: &Path) -> bool {
     let input = prompt("New session name: ");
     if input.trim().is_empty() {
-        return;
+        return false;
     }
     let name = match validate_session_name(&input) {
         Ok(name) => name,
         Err(reason) => {
             show_message(&reason);
-            return;
+            return false;
         }
     };
     let filename = session_filename(&name);
     let path = dir.join(&filename);
     if path.exists() {
         show_message(&format!("Session '{}' already exists.", name));
-        return;
+        return false;
     }
     // Minimal session: one tab + launch (opens default shell).
     // "launch" with no args uses kitty's configured shell.
     // The kitty-unserialize-data form in saved sessions is for
     // restoring existing windows and must not be used here.
-    if let Err(err) = fs::write(&path, "new_tab\nlaunch\n") {
+    if let Err(err) = fs::create_dir_all(dir).and_then(|_| fs::write(&path, "new_tab\nlaunch\n")) {
         show_message(&format!("Failed to create '{}': {}.", filename, err));
-        return;
+        return false;
     }
-    goto_session(dir, &filename);
+    match goto_session(dir, &filename) {
+        Ok(()) => true,
+        Err(err) => {
+            show_message(&format!(
+                "Session '{}' was created but could not be opened. {}",
+                name, err
+            ));
+            false
+        }
+    }
 }
 
 /// Save the current state of the session `name` to its own file `session`.
@@ -243,8 +299,7 @@ pub fn rename_session(dir: &Path, session: &str) -> bool {
         show_message(&format!("Failed to rename '{}': {}.", old, err));
         return false;
     }
-    goto_session(dir, &new_filename);
-    if !session_is_open(&new) {
+    if goto_session(dir, &new_filename).is_err() {
         let undone = fs::rename(&new_path, &old_path).is_ok();
         show_message(&format!(
             "Could not open '{}'. {}",
@@ -409,7 +464,7 @@ mod tests {
     fn refuses_unsafe_names() {
         for bad in [
             "", "   ", ".hidden", "..", "../evil", "a/b", "a\\b", "it's", "say \"hi\"",
-            "tab\there", "notes.kitty-session", NO_SESSION, CREATE_NEW,
+            "tab\there", "notes.kitty-session", NO_SESSION,
         ] {
             assert!(validate_session_name(bad).is_err(), "{:?} should be refused", bad);
         }
@@ -422,6 +477,25 @@ mod tests {
         assert_eq!(regex_escape("x[1](2)"), "x\\[1\\]\\(2\\)");
         assert_eq!(session_match("test"), "session:^test$");
         assert!(!session_match("my proj").contains(' '));
+    }
+
+    #[test]
+    fn missing_sessions_directory_is_an_empty_list() {
+        let dir = std::env::temp_dir().join("esm-test-definitely-missing-dir");
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(list_sessions(&dir).unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn lists_only_session_files_sorted() {
+        let dir = std::env::temp_dir().join(format!("esm-test-list-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        for f in ["b.kitty-session", "a b.kitty-session", "notes.txt"] {
+            fs::write(dir.join(f), "").unwrap();
+        }
+        assert_eq!(list_sessions(&dir).unwrap(), vec!["a b", "b"]);
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
